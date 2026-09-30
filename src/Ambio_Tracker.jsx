@@ -1,6 +1,32 @@
 import React, { useState, useMemo, useEffect, useRef, Fragment } from "react";
 import ReactDOM from "react-dom"; // for createPortal — bundled by Vite on the deployed site; the localhost index.html strips this line (ReactDOM is already a UMD global there)
 
+// ── Storage isolation (CRITICAL) ─────────────────────────────────────────────
+// GitHub Pages project sites ALL live on one origin (agagan-oss.github.io/Ambio-Tracker,
+// /Campaign-Tracker-, …). Browser localStorage is scoped to the ORIGIN, not the path, so
+// every tracker on this account shares ONE localStorage bucket. Ambio is a fork of Zeus and
+// reuses many of the same keys ("campaign-tracker-v3", "zeus-memory", …), so without a
+// namespace the two trackers silently overwrite each other's campaigns — which looked like
+// "my import didn't save / it's showing Zeus's data". Fix: shadow `localStorage` for this
+// whole module with a shim that transparently prefixes every key with "ambio::". This isolates
+// Ambio's data from Zeus (and any other tracker on this account) on the deployed site AND
+// locally. `key()`/`length` only see Ambio's own keys, so storage math + iteration stay correct.
+// setItem is intentionally NOT wrapped in try/catch here so real quota errors still propagate
+// to each caller's own try/catch (that's how the app detects a full store).
+const _AMBIO_NS = "ambio::";
+const localStorage = (function(real){
+  if(!real) return { getItem:()=>null, setItem:()=>{}, removeItem:()=>{}, clear:()=>{}, key:()=>null, get length(){ return 0; } };
+  const names = () => { const out=[]; for(let i=0;i<real.length;i++){ const k=real.key(i); if(k&&k.indexOf(_AMBIO_NS)===0) out.push(k.slice(_AMBIO_NS.length)); } return out; };
+  return {
+    getItem(k){ return real.getItem(_AMBIO_NS + k); },
+    setItem(k,v){ real.setItem(_AMBIO_NS + k, v); },
+    removeItem(k){ real.removeItem(_AMBIO_NS + k); },
+    clear(){ names().forEach(k => real.removeItem(_AMBIO_NS + k)); },
+    key(i){ const n = names(); return (i>=0 && i<n.length) ? n[i] : null; },
+    get length(){ return names().length; },
+  };
+})(typeof window !== "undefined" ? window.localStorage : null);
+
 const STORAGE_KEY = "campaign-tracker-v3";
 const ZEUS_KEY = "campaign-tracker-zeus";
 const EXPORT_KEY = "campaign-tracker-last-export";
